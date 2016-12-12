@@ -1,0 +1,144 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Jack Chen"
+date: "December 10, 2016"
+output: html_document
+---
+
+## Overview
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. A group of enthusiasts who take measurements about themselves regularly are trying to improve their health, to find patterns in their behavior, or because they are tech geeks. 
+
+One thing that people regularly do is quantify ***how much*** of a particular activity they do, but they rarely quantify ***how well*** they do it. In this project, the goal is to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants, who were asked to perform barbell lifts correctly and incorrectly in 5 different ways, to predict the manner in which they did the exercise. 
+
+This is the "classe" variable in the training set. By using any of the other variables to predict with, I will create a report describing how I build the model, how I use cross validation, what I think the expected out of sample error is, and why I make the choices. 
+
+## Load Relevant Libraries
+```{r}
+library(caret) 
+library(lars)
+library(elasticnet)
+library(rpart)
+library(rattle)
+library(rpart.plot)
+library(plyr)
+```
+
+## Load Data 
+```{r}
+#Create Training and Test Sets
+trainUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+
+training = read.csv(trainUrl, stringsAsFactors = FALSE, na.strings=c("","NA","#DIV/01"))
+testing = read.csv(testUrl,stringsAsFactors = FALSE, na.strings=c("","NA","#DIV/01"))
+
+dim(training)
+#names(training)
+
+#testing doesn't have lots of data
+dim(testing) 
+
+#partitioning trainging datA
+inTrain <- createDataPartition(training$classe, p=0.6, list=FALSE)
+
+partTraining <- training[inTrain,]
+partTesting <- training[-inTrain,]
+
+dim(partTraining)
+dim(partTesting)
+
+#tidy data
+#remove Near Zero Covariates
+nzvTraining<-nearZeroVar(partTraining,saveMetrics=TRUE)
+partTraining<-partTraining[,!nzvTraining[4]]
+partTesting<-partTesting[,!nzvTraining[4]]
+
+dim(partTraining)
+dim(partTesting)
+
+#remove sequence number in the first column
+partTraining<-partTraining[c(-1)]
+partTesting<-partTesting[c(-1)]
+
+dim(partTraining)
+dim(partTesting)
+
+#Clean variables with more than 60% NA
+newTrain<-partTraining
+for(i in 1:length(partTraining)){
+  if(sum(is.na(partTraining[,i]))/nrow(partTraining)>=.7){
+    for(j in 1:length(newTrain)){
+      if(length(grep(names(partTraining)[i],names(newTrain)[j]))==1){
+        newTrain<-newTrain[,-j]
+      }
+    }
+  }
+}
+partTraining<-newTrain
+rm(newTrain)
+dim(partTraining)
+names(partTraining)
+
+#Synch columns in testing data
+synchCol<-colnames(partTraining)
+synchCol1<-colnames(partTraining[,-58]) #without classe column
+
+partTesting<-partTesting[synchCol] #synch columns in partTesting with partTraining
+testing<-testing[synchCol1] #synch columns in testing with partTraining
+
+dim(partTesting)
+dim(testing)
+
+#Synch data type for testing 
+backTesting<-testing
+for(i in 1:length(testing)){
+  for(j in 1:length(partTraining)){
+   if(length(grep(names(partTraining)[j],names(testing)[i]))==1){
+     class(testing[i])<-class(partTraining[j])
+   } 
+  }
+}
+
+#synch class
+testing<-rbind(partTraining[2,-58],testing)
+testing<-testing[-1,]
+testing$classe<-""
+dim(testing)
+```
+
+## Prediction with Decision Tree
+```{r}
+set.seed(233)
+modFitDT<-train(classe ~ ., data=partTraining, method="rpart")
+modFitDT$finalModel
+fancyRpartPlot(modFitDT$finalModel)
+
+predictDT<-predict(modFitDT,partTesting)
+cmTree<-confusionMatrix(predictDT, partTesting$classe)
+cmTree
+
+#plot(cmTree$table,col=cmTree$byClass, main=paste("Decision Tree Confusion Matrix: Accuracy = ",round(cmTree$overall["Accuracy"],4)))
+```
+
+## Prediction with Generalized Boosted Regression
+```{r}
+set.seed(1234)
+fitControl<-trainControl(method="repeatedcv", number=5, repeats=1)
+modFitgbm<-train(classe~.,method="gbm", data=partTraining, trControl=fitControl, verbose=FALSE)
+modFitgbm
+
+preditgbm<-predict(modFitgbm,partTesting)
+cmgbm<-confusionMatrix(preditgbm,partTesting$classe)
+cmgbm
+
+plot(modFitgbm, ylim=c(0.9,1))
+```
+
+
+## Predicting Results on the Test Data
+GBM gave an Accurary in the partTesting dataset of 99.71%, which was more accurate than Decision Tree. The expected out-of-sample error is 100-99.71 = 0.29%
+```{r}
+predictgbm1<-predict(modFitgbm, testing)
+predictgbm1
+
+``` 
